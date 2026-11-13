@@ -1,0 +1,160 @@
+# Philips Hue Dimmer Switch RWL020/RWL021 - ZHA blueprint
+# Customized for Philips LTC003 White Ambiance ceiling light.
+# On: if off, restore previous state; if on, cycle color temperature.
+# Off and brightness handling retained from the working fixed blueprint.
+
+blueprint:
+  name: ZHA - Philips RWL021 + LTC003 Full Control
+  description: >
+    Custom ZHA control for Philips Hue Dimmer Switch RWL020/RWL021 and a
+    color-temperature-capable light such as Philips LTC003. When the light is
+    off, the On button restores its previous state. When the light is on,
+    repeated On presses cycle through five color temperatures. Off and
+    brightness use the structured ZHA events used by the fixed RWL021 blueprint.
+  domain: automation
+  input:
+    remote:
+      name: Philips Hue Dimmer Switch
+      description: Select the RWL020 or RWL021 remote
+      selector:
+        device:
+          integration: zha
+          manufacturer: Philips
+          entity:
+            - domain:
+                - sensor
+              device_class:
+                - battery
+          multiple: false
+    light_entity:
+      name: Philips Hue light
+      description: Select one color-temperature-capable light, such as LTC003
+      selector:
+        entity:
+          domain: light
+          multiple: false
+  source_url: https://gist.github.com/mark-wilson/e15b4613c23ef225e3853a53d9ef3bdc
+
+mode: restart
+max_exceeded: silent
+
+variables:
+  selected_light: !input light_entity
+
+trigger:
+  - platform: event
+    event_type: zha_event
+    event_data:
+      device_id: !input remote
+
+action:
+  - variables:
+      command: "{{ trigger.event.data.command }}"
+      cluster_id: "{{ trigger.event.data.cluster_id }}"
+      endpoint_id: "{{ trigger.event.data.endpoint_id }}"
+
+  - choose:
+      # On button: restore if off; cycle color temperature if already on.
+      - conditions:
+          - "{{ command == 'on' }}"
+          - "{{ cluster_id == 6 }}"
+          - "{{ endpoint_id == 1 }}"
+        sequence:
+          - choose:
+              - conditions:
+                  - "{{ is_state(selected_light, 'off') }}"
+                sequence:
+                  - service: light.turn_on
+                    target:
+                      entity_id: !input light_entity
+                    data:
+                      transition: 0.4
+            default:
+              - variables:
+                  next_kelvin: >
+                    {% set ct = state_attr(selected_light, 'color_temp_kelvin') | int(0) %}
+                    {% if ct < 2450 %}
+                      2700
+                    {% elif ct < 3100 %}
+                      3500
+                    {% elif ct < 4250 %}
+                      5000
+                    {% elif ct < 5750 %}
+                      6500
+                    {% else %}
+                      2200
+                    {% endif %}
+              - service: light.turn_on
+                target:
+                  entity_id: !input light_entity
+                data:
+                  color_temp_kelvin: "{{ next_kelvin | int }}"
+                  transition: 0.4
+
+      # Off button
+      - conditions:
+          - "{{ command == 'off_with_effect' }}"
+          - "{{ cluster_id == 6 }}"
+          - "{{ endpoint_id == 1 }}"
+        sequence:
+          - service: light.turn_off
+            target:
+              entity_id: !input light_entity
+            data:
+              transition: 0
+
+      # Brightness up - small step
+      - conditions:
+          - "{{ command == 'step' }}"
+          - "{{ cluster_id == 8 }}"
+          - "{{ endpoint_id == 1 }}"
+          - "{{ trigger.event.data.params.step_mode == 0 and trigger.event.data.params.step_size == 30 }}"
+        sequence:
+          - service: light.turn_on
+            target:
+              entity_id: !input light_entity
+            data:
+              brightness_step_pct: 10
+              transition: 0
+
+      # Brightness up - large step
+      - conditions:
+          - "{{ command == 'step' }}"
+          - "{{ cluster_id == 8 }}"
+          - "{{ endpoint_id == 1 }}"
+          - "{{ trigger.event.data.params.step_mode == 0 and trigger.event.data.params.step_size == 56 }}"
+        sequence:
+          - service: light.turn_on
+            target:
+              entity_id: !input light_entity
+            data:
+              brightness_step_pct: 25
+              transition: 0
+
+      # Brightness down - small step
+      - conditions:
+          - "{{ command == 'step' }}"
+          - "{{ cluster_id == 8 }}"
+          - "{{ endpoint_id == 1 }}"
+          - "{{ trigger.event.data.params.step_mode == 1 and trigger.event.data.params.step_size == 30 }}"
+        sequence:
+          - service: light.turn_on
+            target:
+              entity_id: !input light_entity
+            data:
+              brightness_step_pct: -10
+              transition: 0
+
+      # Brightness down - large step
+      - conditions:
+          - "{{ command == 'step' }}"
+          - "{{ cluster_id == 8 }}"
+          - "{{ endpoint_id == 1 }}"
+          - "{{ trigger.event.data.params.step_mode == 1 and trigger.event.data.params.step_size == 56 }}"
+        sequence:
+          - service: light.turn_on
+            target:
+              entity_id: !input light_entity
+            data:
+              brightness_step_pct: -25
+              transition: 0
